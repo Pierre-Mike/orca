@@ -73,6 +73,10 @@ export function useRuntimeAccessGrants(args: {
           return
         }
         if (mountedRef.current) {
+          // Invalidate any reload still in flight; its pre-revocation list would write the
+          // revoked grant back. Clearing isLoading here because that load's finally no longer can.
+          loadIdRef.current += 1
+          setIsLoading(false)
           setGrants((current) => current.filter((entry) => entry.deviceId !== grant.deviceId))
         }
         onGrantRevokedRef.current(grant.deviceId)

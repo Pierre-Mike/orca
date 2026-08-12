@@ -113,8 +113,7 @@ describe('RuntimePairingUrlGenerator', () => {
     )
   })
 
-  // Why: the pairing offer only skips grafting the bound local port onto the advertised host when the
-  // address carries a scheme, so an https:// paste has to reach main as wss:// or the link dials :6768.
+  // Preserve wss:// so main does not append the local WebSocket port.
   it('normalizes a pasted https tunnel URL to wss before advertising it', async () => {
     runtimePairingLinkCache.intent = 'cloudflare'
     runtimePairingLinkCache.selectedAddress = 'https://tidy-otter-plum.trycloudflare.com/'

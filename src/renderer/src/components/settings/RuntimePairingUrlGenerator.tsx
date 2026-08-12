@@ -140,9 +140,8 @@ export function RuntimePairingUrlGenerator({
     }
   }, [intent, networkInterfaces, selectedAddress])
 
-  // Why: the Cloudflare Tunnel step needs the port cloudflared should point at, which is the bound
-  // listener rather than any address the user picks. Best effort — without it the panel withholds
-  // the command rather than printing an uncopyable one.
+  // Re-read on intent change so selecting Cloudflare Tunnel picks up a listener that bound (or
+  // rebound on a new port) after this pane mounted.
   useEffect(() => {
     let cancelled = false
     void (async () => {
@@ -152,13 +151,13 @@ export function RuntimePairingUrlGenerator({
           setLocalWebSocketPort(webSocketEndpointPort(status.endpoint))
         }
       } catch {
-        /* leave the port unknown */
+        /* leave the port unknown; the panel withholds the command */
       }
     })()
     return () => {
       cancelled = true
     }
-  }, [mountedRef])
+  }, [mountedRef, intent])
 
   const clearGeneratedUrls = (): void => {
     clearGeneratedRuntimePairingLink()
@@ -175,8 +174,7 @@ export function RuntimePairingUrlGenerator({
     runtimePairingLinkCache.selectedAddress = address
     setSelectedAddress(address)
     rememberIntentAddress(intent, address)
-    // Why: a tunnel host without a scheme would inherit the bound local port and advertise
-    // `ws://host:6768` through an edge that only answers on 443, so send the normalized wss:// URL.
+    // Send wss:// so main does not graft the local port onto the tunnel host.
     const tunnelAddress = intent === 'cloudflare' ? parseCloudflareTunnelAddress(address) : null
     const advertisedAddress = tunnelAddress?.ok ? tunnelAddress.value : address
     setIsGeneratingPairing(true)

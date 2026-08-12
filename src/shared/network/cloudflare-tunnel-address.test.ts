@@ -40,6 +40,14 @@ describe('parseCloudflareTunnelAddress', () => {
     expect(parseCloudflareTunnelAddress('wss://orca.example.com').ok).toBe(true)
   })
 
+  // Why: normalizePairingUrl maps http: to ws:, so without an explicit scheme check a pasted
+  // http:// address would ship pairing traffic to a public host in cleartext.
+  it('rejects schemes that would reach a public host unencrypted', () => {
+    expect(parseCloudflareTunnelAddress('http://orca.example.com').ok).toBe(false)
+    expect(parseCloudflareTunnelAddress('ws://orca.example.com').ok).toBe(false)
+    expect(parseCloudflareTunnelAddress('http://tidy-otter-plum.trycloudflare.com').ok).toBe(false)
+  })
+
   it('trims surrounding whitespace', () => {
     expect(parseCloudflareTunnelAddress('  https://orca.example.com  ').ok).toBe(true)
   })

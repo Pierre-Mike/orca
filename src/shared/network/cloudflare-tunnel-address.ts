@@ -18,6 +18,11 @@ export function parseCloudflareTunnelAddress(input: string): ParseCloudflareTunn
   if (!normalized) {
     return { ok: false }
   }
+  // normalizePairingUrl maps http: to ws:, which would carry pairing traffic to a public host in
+  // cleartext. cloudflared always terminates TLS, so anything but wss: here is a mistake.
+  if (!normalized.startsWith('wss://')) {
+    return { ok: false }
+  }
   // A tunnel fronting loopback, a tailnet, or a LAN host mints a link the outside world cannot
   // open; those destinations belong to the other intents.
   return classifyRemotePairingHostname(new URL(normalized).hostname) === 'public'
