@@ -28,8 +28,8 @@ import { resolveTerminalInlineImagesEnabled } from '../../../../../shared/termin
 
 /** Transport creation, terminal capability replies, viewport claims, and undeliverable-input recovery. */
 export function installPtyInputRecovery(session: ConnectPanePtySession): void {
-  session.markAcceptedTerminalInputSent = (): void => {
-    session.markTerminalInputSent()
+  session.markAcceptedTerminalInputSent = (generation = session.terminalInputGeneration): void => {
+    session.markTerminalInputSent(generation)
     session.recordTerminalInputForHibernationFallback()
   }
   session.terminalTheme = session.pane.terminal.options.theme

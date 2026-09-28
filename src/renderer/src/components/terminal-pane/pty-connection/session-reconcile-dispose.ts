@@ -173,7 +173,7 @@ export function installSessionReconcileDispose(session: ConnectPanePtySession): 
     reconcileIfSessionDead: session.reconcileIfSessionDead,
     reconcileIfSessionMissing: session.reconcileIfSessionMissing,
     isUntouchedFreshSpawnPty: (ptyId) =>
-      session.spawnedFreshPtyId === ptyId && !Number.isFinite(session.lastTerminalInputAt),
+      session.spawnedFreshPtyId === ptyId && !session.hasTerminalInputForCurrentPty(),
     dispose() {
       session.disposed = true
       session.startupTiming?.finish('disposed')

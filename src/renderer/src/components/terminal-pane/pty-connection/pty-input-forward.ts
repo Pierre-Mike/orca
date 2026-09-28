@@ -1,10 +1,8 @@
-import type { ManagedPaneInternal } from '@/lib/pane-manager/pane-manager-types'
 import { subscribeToTerminalInputData } from '../terminal-user-input-signal'
 import { installTerminalImeCompositionRoute } from '../terminal-ime-composition-route'
 import { useAppStore } from '@/store'
 import { isTerminalQueryReply } from '../../../../../shared/terminal-query-reply'
 import { safeFitAndThen } from '@/lib/pane-manager/pane-tree-ops'
-import { requestStablePaneFit } from '@/lib/pane-manager/pane-fit-resize-observer'
 import { getFitOverrideForPty } from '@/lib/pane-manager/mobile-fit-overrides'
 import { isPtyLocked } from '@/lib/pane-manager/mobile-driver-state'
 import { getAppliedSizeReadE2eDelayMs } from '../pty-applied-size-read-e2e-delay'
@@ -18,7 +16,6 @@ import {
   type PanePtyResizeHoldFlushDetail
 } from '@/lib/pane-manager/pane-pty-resize-hold'
 
-import { FOREGROUND_GRID_DRIFT_CHECK_MIN_MS } from './foreground-output-budgets'
 import { TERMINAL_FOCUS_IN_SEQUENCE, TERMINAL_FOCUS_OUT_SEQUENCE } from './foreground-output-scan'
 import { isRemoteRuntimePtyId } from './paired-parked-terminal-restore'
 import { isCodexPaneStale } from './codex-pane-stale'
@@ -107,6 +104,7 @@ export function installPtyInputForward(session: ConnectPanePtySession): void {
     // excluded because those transports do not expose sendInputAccepted.
     const acknowledgedIntent = intent ?? session.inferIntentFromExactTerminalInput(data)
     if (acknowledgedIntent && session.transport.sendInputAccepted) {
+      const inputGeneration = session.terminalInputGeneration
       const interruptStatusBaseline =
         useAppStore.getState().agentStatusByPaneKey[session.cacheKey] ?? null
       // Why: equal snapshots retain double-Escape semantics while older snapshots lose ack races.
@@ -122,12 +120,13 @@ export function installPtyInputForward(session: ConnectPanePtySession): void {
         session.cancelSuspendedShellCommandInference()
       }
       session.clearPendingTerminalInputIntent()
+      session.markTerminalInputAttempted(inputGeneration)
       const writePromise = session.transport
         .sendInputAccepted(data)
         .then((accepted): boolean | Promise<boolean> | null => {
           if (accepted) {
             // Why: rejected writes use transport recovery and must not arm a parser probe.
-            session.markAcceptedTerminalInputSent()
+            session.markAcceptedTerminalInputSent(inputGeneration)
             session.observeAcceptedShellCommandInput(data)
             session.observeAcceptedTerminalInput(data, acknowledgedIntent)
             const immediateResult = session.interruptInference.observeInputIntent(
@@ -151,9 +150,11 @@ export function installPtyInputForward(session: ConnectPanePtySession): void {
       return
     }
     if (intent) {
+      const inputGeneration = session.terminalInputGeneration
       session.claimViewportForUserActivity()
+      session.markTerminalInputAttempted(inputGeneration)
       if (session.transport.sendInput(data)) {
-        session.markAcceptedTerminalInputSent()
+        session.markAcceptedTerminalInputSent(inputGeneration)
         session.observeAcceptedShellCommandInput(data)
         session.observeAcceptedTerminalInput(data, intent)
       } else {
@@ -162,9 +163,11 @@ export function installPtyInputForward(session: ConnectPanePtySession): void {
       session.clearPendingTerminalInputIntent()
       return
     }
+    const inputGeneration = session.terminalInputGeneration
     session.claimViewportForUserActivity()
+    session.markTerminalInputAttempted(inputGeneration)
     if (session.transport.sendInput(data)) {
-      session.markAcceptedTerminalInputSent()
+      session.markAcceptedTerminalInputSent(inputGeneration)
       session.observeAcceptedShellCommandInput(data)
       session.observeAcceptedTerminalInput(data)
       session.observeSentTerminalInputIntent(data)
@@ -318,61 +321,6 @@ export function installPtyInputForward(session: ConnectPanePtySession): void {
       }
     }
   }
-  session.pendingForegroundGridDriftCheckRaf = null
-  session.lastForegroundGridDriftCheckAt = Number.NEGATIVE_INFINITY
-  session.readProposedTerminalGrid = (): { cols: number; rows: number } | null => {
-    try {
-      const proposed = session.pane.fitAddon.proposeDimensions()
-      if (!proposed || proposed.cols <= 0 || proposed.rows <= 0) {
-        return null
-      }
-      return proposed
-    } catch {
-      return null
-    }
-  }
-  session.terminalGridDriftedFromFit = (): boolean => {
-    const proposed = session.readProposedTerminalGrid()
-    return Boolean(
-      proposed &&
-      (session.pane.terminal.cols !== proposed.cols || session.pane.terminal.rows !== proposed.rows)
-    )
-  }
-  session.scheduleForegroundGridDriftCheck = (force = false): void => {
-    if (
-      session.disposed ||
-      !session.deps.isVisibleRef.current ||
-      session.shouldSuppressDesktopPtyResize() ||
-      session.pendingForegroundGridDriftCheckRaf !== null ||
-      (!force && session.terminalSelectionFitGuard?.isActive())
-    ) {
-      return
-    }
-    const now = performance.now()
-    if (
-      !force &&
-      now - session.lastForegroundGridDriftCheckAt < FOREGROUND_GRID_DRIFT_CHECK_MIN_MS
-    ) {
-      return
-    }
-    session.lastForegroundGridDriftCheckAt = now
-    session.pendingForegroundGridDriftCheckRaf = requestAnimationFrame(() => {
-      session.pendingForegroundGridDriftCheckRaf = null
-      if (
-        session.disposed ||
-        !session.deps.isVisibleRef.current ||
-        session.shouldSuppressDesktopPtyResize() ||
-        session.terminalSelectionFitGuard?.isActive() ||
-        !session.terminalGridDriftedFromFit()
-      ) {
-        return
-      }
-      requestStablePaneFit(session.pane as ManagedPaneInternal, () =>
-        session.ptySizeReassertion.request({ fit: false })
-      )
-    })
-  }
-
   session.readPaneSize = () => readPaneSize(session)
   initializePaneGeometry(session)
 }

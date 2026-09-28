@@ -347,26 +347,34 @@ describe('connectPanePty', () => {
     expect(manager.closePane).toHaveBeenCalledWith(2)
   })
 
-  it('keeps a worktree sole terminal mounted when its freshly-spawned PTY exits before input (direnv failure)', async () => {
+  it('retains a failed local startup when its freshly-spawned PTY exits before input', async () => {
     // Why (regression): a failing .envrc direnv makes the sole terminal's shell exit immediately; routing to onPtyExitRef would close the tab and bounce the user to Landing, so keep it mounted.
     const { connectPanePty } = await import('./pty-connection')
     const transport = createMockTransport('tab-pty')
     transportFactoryQueue.push(transport)
     const manager = createManager(1)
-    const deps = createDeps()
+    const deps = createDeps({ onPaneProcessDied: vi.fn() })
 
     connectPanePty(createPane(1) as never, manager as never, deps as never)
     const onPtySpawn = createdTransportOptions[0]?.onPtySpawn as
       | ((ptyId: string) => void)
       | undefined
-    const onPtyExit = createdTransportOptions[0]?.onPtyExit as ((ptyId: string) => void) | undefined
+    const onPtyExit = createdTransportOptions[0]?.onPtyExit as
+      | ((ptyId: string, exitCode?: number) => void)
+      | undefined
     expect(onPtySpawn).toBeTypeOf('function')
     expect(onPtyExit).toBeTypeOf('function')
 
     // A genuine fresh spawn (onPtySpawn fires only for non-reattach spawns) the user never typed into.
     onPtySpawn?.('tab-pty')
-    onPtyExit?.('tab-pty')
+    onPtyExit?.('tab-pty', 1)
 
+    expect(deps.onPaneProcessDied).toHaveBeenCalledWith({
+      paneId: 1,
+      exitCode: 1,
+      startup: null,
+      reason: 'process-failed'
+    })
     expect(deps.onPtyExitRef.current).not.toHaveBeenCalled()
     expect(manager.closePane).not.toHaveBeenCalled()
   })
@@ -471,7 +479,7 @@ describe('connectPanePty', () => {
     expect(manager.closePane).not.toHaveBeenCalled()
   })
 
-  it('keeps a failed local terminal visible after user input', async () => {
+  it('tears down a failed local terminal after user input', async () => {
     const { connectPanePty } = await import('./pty-connection')
     const pane = createPane(1)
     const transport = createMockTransport('tab-pty')
@@ -480,24 +488,23 @@ describe('connectPanePty', () => {
     const deps = createDeps({ onPaneProcessDied: vi.fn() })
 
     connectPanePty(pane as never, manager as never, deps as never)
+    const onPtySpawn = createdTransportOptions[0]?.onPtySpawn as
+      | ((ptyId: string) => void)
+      | undefined
     const onPtyExit = createdTransportOptions[0]?.onPtyExit as
       | ((ptyId: string, exitCode?: number) => void)
       | undefined
 
-    sendTerminalInputThroughPane(pane, 'agent startup\r')
+    onPtySpawn?.('tab-pty')
+    sendTerminalInputThroughPane(pane, 'exit\r')
     onPtyExit?.('tab-pty', 1)
 
-    expect(deps.onPaneProcessDied).toHaveBeenCalledWith({
-      paneId: 1,
-      exitCode: 1,
-      startup: null,
-      reason: 'process-failed'
-    })
-    expect(deps.onPtyExitRef.current).not.toHaveBeenCalled()
+    expect(deps.onPaneProcessDied).not.toHaveBeenCalled()
+    expect(deps.onPtyExitRef.current).toHaveBeenCalledWith('tab-pty', 1)
     expect(manager.closePane).not.toHaveBeenCalled()
   })
 
-  it('keeps a failed local split pane visible', async () => {
+  it('keeps a freshly-spawned failed local split pane visible before input', async () => {
     const { connectPanePty } = await import('./pty-connection')
     const transport = createMockTransport('tab-pty')
     transportFactoryQueue.push(transport)
@@ -505,9 +512,13 @@ describe('connectPanePty', () => {
     const deps = createDeps({ onPaneProcessDied: vi.fn() })
 
     connectPanePty(createPane(1) as never, manager as never, deps as never)
+    const onPtySpawn = createdTransportOptions[0]?.onPtySpawn as
+      | ((ptyId: string) => void)
+      | undefined
     const onPtyExit = createdTransportOptions[0]?.onPtyExit as
       | ((ptyId: string, exitCode?: number) => void)
       | undefined
+    onPtySpawn?.('tab-pty')
     onPtyExit?.('tab-pty', 1)
 
     expect(deps.onPaneProcessDied).toHaveBeenCalledWith({
@@ -533,10 +544,14 @@ describe('connectPanePty', () => {
     const deps = createDeps({ onPaneProcessDied: vi.fn(), startup })
 
     connectPanePty(createPane(1) as never, manager as never, deps as never)
+    const onPtySpawn = createdTransportOptions[0]?.onPtySpawn as
+      | ((ptyId: string) => void)
+      | undefined
     const onPtyExit = createdTransportOptions[0]?.onPtyExit as
       | ((ptyId: string, exitCode?: number) => void)
       | undefined
 
+    onPtySpawn?.('tab-pty')
     capturedDataCallback.current?.(
       'console device allocation failure - too many consoles in use, max consoles is 128'
     )
@@ -549,6 +564,7 @@ describe('connectPanePty', () => {
       reason: 'git-bash-console-capacity'
     })
     expect(deps.onPtyExitRef.current).not.toHaveBeenCalled()
+    expect(manager.closePane).not.toHaveBeenCalled()
   })
 
   it('retains the cold-restore resume startup when its replacement hits capacity', async () => {
@@ -568,6 +584,10 @@ describe('connectPanePty', () => {
 
     connectPanePty(createPane(1) as never, createManager(1) as never, deps as never)
     await flushAsyncTicks(20)
+    const onPtySpawn = createdTransportOptions[0]?.onPtySpawn as
+      | ((ptyId: string) => void)
+      | undefined
+    onPtySpawn?.('resume-pty')
     callbacks[0]?.onData?.('too many consoles in use, max consoles is 128')
     const onPtyExit = createdTransportOptions[0]?.onPtyExit as
       | ((ptyId: string, exitCode?: number) => void)
@@ -616,6 +636,10 @@ describe('connectPanePty', () => {
     connectPanePty(createPane(1) as never, createManager(1) as never, deps as never)
     await flushAsyncTicks(30)
     expect(callbacks).toHaveLength(2)
+    const onPtySpawn = createdTransportOptions[0]?.onPtySpawn as
+      | ((ptyId: string) => void)
+      | undefined
+    onPtySpawn?.('resume-pty')
     const onPtyExit = createdTransportOptions[0]?.onPtyExit as
       | ((ptyId: string, exitCode?: number) => void)
       | undefined
